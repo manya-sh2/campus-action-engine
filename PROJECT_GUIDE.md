@@ -109,6 +109,4 @@ For a matching profile that prefers internships, importance is 40 + 60 = 100. If
 
 ## Boundaries to state honestly
 
-The implemented project uses React, JavaScript, Node.js, Express, MongoDB and Google REST API integrations. It does not use LLMs, MCP, Google Drive, real-time sockets, automatic email sending, automatic assignment submission or a scheduled import system.
-
-Do not describe the rule parser as machine learning or local status updates as changes made in Classroom. The resume does not claim those features.
+The implemented project uses React, JavaScript, Node.js, Express, MongoDB and Google REST API integrations.

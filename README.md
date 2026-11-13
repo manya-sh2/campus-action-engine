@@ -208,4 +208,3 @@ Integration tests start a separate temporary MongoDB instance and exercise the a
 
 After `npm --prefix frontend run build`, Express can serve `frontend/dist` directly. Set `CLIENT_URL` to the backend's browser origin (for example `http://localhost:5000`) and run `npm --prefix backend start`. The production build uses the same origin for API calls unless `VITE_API_URL` was explicitly set at build time.
 
-For a deployed real-account application, use HTTPS, `NODE_ENV=production`, matching client/redirect URLs and server-only secrets. This repository does not include a deployment or claim that one has been verified.
