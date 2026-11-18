@@ -14,16 +14,18 @@ const email = text => ({ source: 'gmail', sourceType: 'email', sourceId: '1', ti
 
 test('source dates survive Gmail and Classroom normalization and the pipeline', async () => {
   const receivedAt = new Date().toISOString();
+  const expectedDate = new Date(receivedAt).toISOString();
   const records = [
     normalizeGmailMessage({ id: 'november', subject: 'Assignment', receivedAt }),
     normalizeClassroomCourseWork({ id: 'work', courseId: 'course', creationTime: '2026-08-26T10:00:00Z', updateTime: receivedAt }),
     normalizeClassroomAnnouncement({ id: 'notice', courseId: 'course', text: 'Room change', creationTime: receivedAt }),
   ];
   for (const item of records) {
-    assert.equal((await runPipeline(item, student)).occurredAt.toISOString(), '2026-11-09T10:00:00.000Z');
+    assert.equal((await runPipeline(item, student)).occurredAt.toISOString(), expectedDate);
   }
+  // Recent-date validation intentionally rejects Gmail records with missing or invalid receipt times.
   for (const occurredAt of [undefined, null, 'invalid']) {
-    assert.equal((await runPipeline({ ...records[0], occurredAt }, student)).occurredAt, null);
+    await assert.rejects(runPipeline({ ...records[0], occurredAt }, student), ItemIgnoredError);
   }
 });
 
