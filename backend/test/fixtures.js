@@ -21,7 +21,7 @@ const gmailMessages = [
     receivedAt: new Date(now).toISOString(),
     body: { text: 'The exam room has changed to Hall B. Read the revised timetable before attending.' },
   },
-  { id: 'test-promo', subject: 'Weekend sale: discount coupon', body: { text: 'Shop now.' } },
+  { id: 'test-promo', subject: 'Weekend sale: discount coupon', receivedAt: new Date(now).toISOString(), body: { text: 'Shop now.' } },
 ];
 const due = daysFromNow(2);
 const classroomCourses = [{ id: 'test-course', name: 'Database Management Systems', courseState: 'ACTIVE' }];
