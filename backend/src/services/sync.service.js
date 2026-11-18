@@ -47,33 +47,38 @@ async function syncUserTasks(user, options = {}) {
   }
 
   // Remove previously saved Gmail and Classroom tasks that no longer match
-  // the common 30-day, category and deadline rules. Other sources are untouched.
-  try {
-    const now = new Date();
-    const cutoff = new Date(now.getTime() - 30 * DAY_MS);
-    const savedTasks = await Task.find({
-      userId: user._id,
-      source: { $in: ['gmail', 'classroom'] },
-    }).select('_id source occurredAt deadline category organization').lean();
-
-    const staleTaskIds = savedTasks.filter(task => {
-      const sourceDate = task.occurredAt ? new Date(task.occurredAt) : null;
-      const isRecent = sourceDate && Number.isFinite(sourceDate.getTime()) && sourceDate >= cutoff;
-      const deadlineIsActive = !task.deadline || new Date(task.deadline) >= now;
-      const categoryIsAllowed = ALLOWED_TASK_CATEGORIES.includes(task.category) ||
-        (task.source === 'gmail' && isPlacementCellSender(task.organization));
-      return !isRecent || !deadlineIsActive || !categoryIsAllowed;
-    }).map(task => task._id);
-
-    if (staleTaskIds.length) {
-      await Task.deleteMany({
+  // the common 30-day, category and deadline rules. Respect source toggles.
+  const sourcesToClean = [];
+  if (options.includeGmail !== false) sourcesToClean.push('gmail');
+  if (options.includeClassroom !== false) sourcesToClean.push('classroom');
+  if (sourcesToClean.length) {
+    try {
+      const now = new Date();
+      const cutoff = new Date(now.getTime() - 30 * DAY_MS);
+      const savedTasks = await Task.find({
         userId: user._id,
-        source: { $in: ['gmail', 'classroom'] },
-        _id: { $in: staleTaskIds },
-      });
+        source: { $in: sourcesToClean },
+      }).select('_id source occurredAt deadline category organization').lean();
+
+      const staleTaskIds = savedTasks.filter(task => {
+        const sourceDate = task.occurredAt ? new Date(task.occurredAt) : null;
+        const isRecent = sourceDate && Number.isFinite(sourceDate.getTime()) && sourceDate >= cutoff;
+        const deadlineIsActive = !task.deadline || new Date(task.deadline) >= now;
+        const categoryIsAllowed = ALLOWED_TASK_CATEGORIES.includes(task.category) ||
+          (task.source === 'gmail' && isPlacementCellSender(task.organization));
+        return !isRecent || !deadlineIsActive || !categoryIsAllowed;
+      }).map(task => task._id);
+
+      if (staleTaskIds.length) {
+        await Task.deleteMany({
+          userId: user._id,
+          source: { $in: sourcesToClean },
+          _id: { $in: staleTaskIds },
+        });
+      }
+    } catch (error) {
+      summary.errors.push({ source: 'cleanup', reason: error.message });
     }
-  } catch (error) {
-    summary.errors.push({ source: 'cleanup', reason: error.message });
   }
 
   summary.fetched = items.length;
