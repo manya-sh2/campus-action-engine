@@ -193,6 +193,89 @@ test('REST and MongoDB end-to-end regression suite', { timeout: 90000 }, async t
     assert.deepEqual(stored.map(task => task.sourceId), ['placement-notice', 'recent-internship', 'recent-job']);
     assert.ok(stored.every(task => ['internship', 'job', 'announcement'].includes(task.category)));
   });
+  await t.test('Classroom sync filters old, irrelevant and expired records and cleans stale tasks', async () => {
+    const student = await User.create({ name: 'Classroom filter test', email: 'classroom-filter@example.edu', googleId: 'classroom-filter-test-id' });
+    const session = await auth.createSession(student._id);
+    const testCookie = 'cae_session=' + session.rawToken;
+    const now = Date.now();
+    const recent = new Date(now - 5 * 86400000).toISOString();
+    const old = new Date(now - 40 * 86400000).toISOString();
+
+    const staleClassroom = await runPipeline({
+      source: 'classroom', sourceType: 'courseWork', sourceId: 'stale-classroom-assignment',
+      title: 'Old assignment', text: 'Submit the assignment.', occurredAt: recent,
+    }, student);
+    await upsertTask(student._id, staleClassroom);
+    await Task.updateOne(
+      { userId: student._id, source: 'classroom', sourceId: 'stale-classroom-assignment' },
+      { $set: { occurredAt: new Date(old) } }
+    );
+
+    // A source omitted from this sync must not be cleaned as a side effect.
+    const savedGmail = await runPipeline({
+      source: 'gmail', sourceType: 'email', sourceId: 'saved-gmail-out-of-window',
+      title: 'Internship application', text: 'Apply for this internship.', occurredAt: recent,
+    }, student);
+    await upsertTask(student._id, savedGmail);
+    await Task.updateOne(
+      { userId: student._id, source: 'gmail', sourceId: 'saved-gmail-out-of-window' },
+      { $set: { occurredAt: new Date(old) } }
+    );
+
+    const announcements = [
+      {
+        id: 'recent-exam', courseId: 'filter-course',
+        text: 'Examination schedule: read the revised exam timetable.',
+        creationTime: recent, updateTime: recent,
+      },
+      {
+        id: 'old-assignment-notice', courseId: 'filter-course',
+        text: 'Assignment: submit the worksheet.',
+        creationTime: old, updateTime: old,
+      },
+      {
+        id: 'expired-exam-notice', courseId: 'filter-course',
+        text: 'Examination notice. Deadline: 2020-01-01',
+        creationTime: recent, updateTime: recent,
+      },
+      {
+        id: 'irrelevant-workshop', courseId: 'filter-course',
+        text: 'Attend the campus workshop.',
+        creationTime: recent, updateTime: recent,
+      },
+    ];
+    const courseWork = [{
+      id: 'recent-coursework', courseId: 'filter-course',
+      title: 'SQL joins assignment',
+      description: 'Complete and submit the SQL assignment.',
+      creationTime: recent, updateTime: recent,
+      dueDate: { year: 2099, month: 12, day: 20 },
+      dueTime: { hours: 10, minutes: 0 },
+    }];
+
+    classroom.getCourses.mock.mockImplementationOnce(async () => [{ id: 'filter-course', name: 'DBMS' }]);
+    classroom.getAnnouncements.mock.mockImplementationOnce(async () => announcements);
+    classroom.getCourseWork.mock.mockImplementationOnce(async () => courseWork);
+    const gmailCallsBefore = gmail.getMessageBatch.mock.calls.length;
+
+    const result = await request('/api/tasks/sync', {
+      method: 'POST', cookie: testCookie, body: { includeGmail: false },
+    });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.data.data, {
+      fetched: 5, created: 2, updated: 0, ignored: 3, failed: 0, errors: [], warnings: [],
+    });
+    assert.equal(gmail.getMessageBatch.mock.calls.length, gmailCallsBefore);
+
+    const storedClassroom = await Task.find({ userId: student._id, source: 'classroom' }).sort({ sourceId: 1 });
+    assert.deepEqual(storedClassroom.map(task => task.sourceId), [
+      'filter-course:announcement:recent-exam',
+      'filter-course:courseWork:recent-coursework',
+    ]);
+    assert.equal(await Task.countDocuments({
+      userId: student._id, source: 'gmail', sourceId: 'saved-gmail-out-of-window',
+    }), 1);
+  });
   await t.test('concurrent imports cannot create duplicate tasks', async () => {
     const candidate = await runPipeline({ source: 'gmail', sourceType: 'email', sourceId: 'race', title: 'Assignment', text: 'Submit assignment', occurredAt: new Date().toISOString() }, owner);
     await Promise.all(Array.from({ length: 5 }, () => upsertTask(owner._id, candidate)));
