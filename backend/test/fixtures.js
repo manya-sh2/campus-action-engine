@@ -27,12 +27,14 @@ const due = daysFromNow(2);
 const classroomCourses = [{ id: 'test-course', name: 'Database Management Systems', courseState: 'ACTIVE' }];
 const classroomAnnouncements = [{
   id: 'test-announcement', courseId: 'test-course',
-  text: 'Class cancelled tomorrow. The revised timetable will be shared in class.',
+  text: 'Exam schedule update: The exam room has changed to Hall B. Read the revised timetable before attending.',
+  creationTime: new Date(now).toISOString(), updateTime: new Date(now).toISOString(),
   alternateLink: 'https://classroom.google.com/', state: 'PUBLISHED',
 }];
 const classroomCourseWork = [{
   id: 'test-assignment', courseId: 'test-course', title: 'SQL joins assignment',
   description: 'Complete the exercises on inner joins and grouping. Submit your solutions in Classroom.',
+  creationTime: new Date(now).toISOString(), updateTime: new Date(now).toISOString(),
   dueDate: { year: due.getUTCFullYear(), month: due.getUTCMonth() + 1, day: due.getUTCDate() },
   dueTime: { hours: due.getUTCHours(), minutes: due.getUTCMinutes() },
   alternateLink: 'https://classroom.google.com/', state: 'PUBLISHED', workType: 'ASSIGNMENT',
