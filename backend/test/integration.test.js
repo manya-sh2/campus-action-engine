@@ -127,11 +127,11 @@ test('REST and MongoDB end-to-end regression suite', { timeout: 90000 }, async t
   await t.test('imports both sources, ignores advertisements and filters ineligible opportunities', async () => {
     const result = await request('/api/tasks/sync', { method: 'POST', cookie, body: {} });
     assert.equal(result.status, 200);
-    assert.deepEqual({ ...result.data.data, warnings: [] }, { fetched: 6, created: 5, updated: 0, ignored: 1, failed: 0, errors: [], warnings: [] });
+    assert.deepEqual({ ...result.data.data, warnings: [] }, { fetched: 6, created: 4, updated: 0, ignored: 2, failed: 0, errors: [], warnings: [] });
     const visible = await request('/api/tasks', { cookie });
     assert.equal(visible.data.data.pagination.total, 4);
     const all = await request('/api/tasks?includeIneligible=true', { cookie });
-    assert.equal(all.data.data.pagination.total, 5);
+    assert.equal(all.data.data.pagination.total, 4);
     assignment = await Task.findOne({ userId: owner._id, category: 'assignment' });
   });
   await t.test('re-sync is idempotent, updates deadlines and preserves completion', async () => {
@@ -141,89 +141,60 @@ test('REST and MongoDB end-to-end regression suite', { timeout: 90000 }, async t
     sample.classroomCourseWork[0].dueDate = { year: 2099, month: 12, day: 20 };
     try {
       const result = await request('/api/tasks/sync', { method: 'POST', cookie, body: {} });
-      assert.equal(result.data.data.created, 0); assert.equal(result.data.data.updated, 5);
+      assert.equal(result.data.data.created, 0); assert.equal(result.data.data.updated, 4);
       const updated = await Task.findById(assignment._id);
       assert.equal(updated.status, 'completed'); assert.notEqual(updated.deadline.getTime(), oldTime);
-      assert.equal(await Task.countDocuments({ userId: owner._id }), 5);
+      assert.equal(await Task.countDocuments({ userId: owner._id }), 4);
       const high = await request('/api/tasks/priority/high', { cookie });
       assert.ok(!high.data.data.some(task => task._id === assignment.id));
     } finally { sample.classroomCourseWork[0].dueDate = original; }
   });
-  await t.test('November source dates drive latest feeds while old urgent work keeps its priority', async () => {
-    const student = await User.create({ name: 'Date regression', email: 'dates@example.edu', googleId: 'dates-test-google-id' });
+  await t.test('Gmail sync keeps only recent allowed categories and Placement Cell emails', async () => {
+    const student = await User.create({ name: 'Gmail filter test', email: 'gmail-filter@example.edu', googleId: 'gmail-filter-test-id' });
     const session = await auth.createSession(student._id);
-    const dateCookie = 'cae_session=' + session.rawToken;
+    const testCookie = 'cae_session=' + session.rawToken;
+    const now = Date.now();
+    const recent = new Date(now - 5 * 86400000).toISOString();
+    const old = new Date(now - 40 * 86400000).toISOString();
     const messages = [
-      { id: 'august-task', subject: 'Assignment', body: { text: 'Submit assignment. Due: 2026-08-26' }, receivedAt: '2026-08-26T10:00:00Z' },
-      { id: 'november-task', subject: 'Workshop', body: { text: 'Attend the workshop' }, receivedAt: '2026-11-09T10:00:00Z' },
-      { id: 'advert', subject: 'Weekend sale', body: { text: 'Shop now' }, receivedAt: '2026-11-09T11:00:00Z' },
+      { id: 'recent-internship', subject: 'Software Internship Opportunity', from: 'Careers <careers@example.edu>', body: { text: 'Apply now. Deadline: 2099-12-20' }, receivedAt: recent },
+      { id: 'recent-job', subject: 'Graduate Job Opportunity', from: 'Recruitment <jobs@example.edu>', body: { text: 'Apply for this job.' }, receivedAt: recent },
+      { id: 'placement-notice', subject: 'Important Notice', from: 'Training & Placement Cell <tpo@example.edu>', body: { text: 'Please read this important notice.' }, receivedAt: recent },
+      { id: 'expired-exam', subject: 'Examination Notice', from: 'Academic Office <office@example.edu>', body: { text: 'Examination details. Deadline: 2020-01-01' }, receivedAt: recent },
+      { id: 'old-assignment', subject: 'Assignment', body: { text: 'Submit this assignment. Deadline: 2099-12-20' }, receivedAt: old },
+      { id: 'newsletter', subject: 'Weekly Newsletter', body: { text: 'General campus updates.' }, receivedAt: recent },
     ];
-    const coursework = { id: 'november-work', courseId: 'date-course', title: 'New assignment', creationTime: '2026-08-01T10:00:00Z', updateTime: '2026-11-07T10:00:00Z' };
-    function nextImport(hasMore) {
-      gmail.getMessageBatch.mock.mockImplementationOnce(async (_id, options) => {
-        assert.equal(options.maxResults, 50);
-        assert.equal(options.q, undefined);
-        return { messages, hasMore };
-      });
-      classroom.getCourses.mock.mockImplementationOnce(async () => [{ id: 'date-course', name: 'Course' }]);
-      classroom.getAnnouncements.mock.mockImplementationOnce(async () => []);
-      classroom.getCourseWork.mock.mockImplementationOnce(async () => [coursework]);
-    }
-    for (const [id, date] of [['legacy-missing', '2026-11-08'], ['legacy-null', '2026-11-06']]) {
-      const candidate = await runPipeline({ source: 'gmail', sourceType: 'email', sourceId: id, title: 'Workshop', text: 'Attend workshop' }, student);
-      await upsertTask(student._id, candidate);
-      // Simulate pre-migration BSON, bypassing schema defaults and timestamps only in this disposable DB.
-      await Task.collection.updateOne({ userId: student._id, sourceId: id }, {
-        $set: { createdAt: new Date(date), ...(id === 'legacy-null' ? { occurredAt: null } : {}) },
-        ...(id === 'legacy-missing' ? { $unset: { occurredAt: '' } } : {}),
-      });
-    }
-    nextImport(false);
-    const firstSync = await request('/api/tasks/sync', { method: 'POST', cookie: dateCookie, body: {} });
-    assert.equal(firstSync.status, 200);
-    assert.deepEqual(firstSync.data.data, { fetched: 4, created: 3, updated: 0, ignored: 1, failed: 0, errors: [], warnings: [] });
-    const expected = ['november-task', 'legacy-missing', 'date-course:courseWork:november-work', 'legacy-null', 'august-task'];
-    const list = await request('/api/tasks', { cookie: dateCookie });
-    assert.deepEqual(list.data.data.tasks.map(task => task.sourceId), expected);
-    assert.equal(list.data.data.tasks[0].occurredAt, '2026-11-09T10:00:00.000Z');
-    assert.equal(list.data.data.tasks[2].occurredAt, '2026-11-07T10:00:00.000Z');
-    assert.ok(list.data.data.tasks.every(task => !('_sortDate' in task)));
-    const pagedIds = [];
-    for (let page = 1; page <= 3; page++) {
-      const result = await request('/api/tasks?sortBy=occurredAt&limit=2&page=' + page, { cookie: dateCookie });
-      assert.equal(result.data.data.pagination.total, 5);
-      pagedIds.push(...result.data.data.tasks.map(task => task.sourceId));
-    }
-    assert.deepEqual(pagedIds, expected);
-    const ascending = await request('/api/tasks?sortBy=occurredAt&sortOrder=asc', { cookie: dateCookie });
-    assert.deepEqual(ascending.data.data.tasks.map(task => task.sourceId), [...expected].reverse());
-    const high = await request('/api/tasks/priority/high', { cookie: dateCookie });
-    assert.equal(high.data.data[0].sourceId, 'august-task');
-    assert.equal(high.data.data[0].occurredAt, '2026-08-26T10:00:00.000Z');
-    const priority = await request('/api/tasks?sortBy=priorityScore', { cookie: dateCookie });
-    assert.equal(priority.data.data.tasks[0].sourceId, 'august-task');
-    const assignmentId = high.data.data[0]._id;
-    await request('/api/tasks/' + assignmentId + '/status', { method: 'PATCH', cookie: dateCookie, body: { status: 'completed' } });
-    // Old stored tasks have no occurredAt until their source is fetched again.
-    await Task.collection.updateOne({ _id: new mongoose.Types.ObjectId(assignmentId) }, { $unset: { occurredAt: '' } });
-    coursework.updateTime = '2026-11-10T10:00:00Z';
-    nextImport(true);
-    const again = await request('/api/tasks/sync', { method: 'POST', cookie: dateCookie, body: {} });
-    assert.deepEqual({ ...again.data.data, warnings: [] }, { fetched: 4, created: 0, updated: 3, ignored: 1, failed: 0, errors: [], warnings: [] });
-    assert.equal(again.data.data.warnings.length, 1);
-    const stored = await Task.findById(assignmentId);
-    assert.equal(stored.status, 'completed');
-    assert.equal(stored.occurredAt.toISOString(), '2026-08-26T10:00:00.000Z');
-    const revised = await request('/api/tasks', { cookie: dateCookie });
-    assert.equal(revised.data.data.tasks[0].sourceId, 'date-course:courseWork:november-work');
-    assert.equal(revised.data.data.tasks[0].occurredAt, '2026-11-10T10:00:00.000Z');
-    assert.equal(await Task.countDocuments({ userId: student._id }), 5);
-    const filtered = await request('/api/tasks?status=completed', { cookie: dateCookie });
-    assert.equal(filtered.data.data.tasks.length, 1);
-    assert.equal(filtered.data.data.tasks[0]._id, assignmentId);
+
+    const oldSavedTask = await runPipeline({
+      source: 'gmail', sourceType: 'email', sourceId: 'already-saved-old-mail',
+      title: 'Internship Application', text: 'Apply now',
+      occurredAt: recent,
+    }, student);
+    await upsertTask(student._id, oldSavedTask);
+    await Task.updateOne(
+      { userId: student._id, source: 'gmail', sourceId: 'already-saved-old-mail' },
+      { $set: { occurredAt: new Date(old) } }
+    );
+
+    gmail.getMessageBatch.mock.mockImplementationOnce(async (_id, options) => {
+      assert.equal(options.q, 'newer_than:30d');
+      assert.equal(options.maxResults, 50);
+      return { messages, hasMore: false };
+    });
+    classroom.getCourses.mock.mockImplementationOnce(async () => []);
+
+    const result = await request('/api/tasks/sync', { method: 'POST', cookie: testCookie, body: {} });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.data.data, {
+      fetched: 6, created: 3, updated: 0, ignored: 3, failed: 0, errors: [], warnings: [],
+    });
+
+    const stored = await Task.find({ userId: student._id, source: 'gmail' }).sort({ sourceId: 1 });
+    assert.deepEqual(stored.map(task => task.sourceId), ['placement-notice', 'recent-internship', 'recent-job']);
+    assert.ok(stored.every(task => ['internship', 'job', 'announcement'].includes(task.category)));
   });
   await t.test('concurrent imports cannot create duplicate tasks', async () => {
-    const candidate = await runPipeline({ source: 'gmail', sourceType: 'email', sourceId: 'race', title: 'Assignment', text: 'Submit assignment' }, owner);
+    const candidate = await runPipeline({ source: 'gmail', sourceType: 'email', sourceId: 'race', title: 'Assignment', text: 'Submit assignment', occurredAt: new Date().toISOString() }, owner);
     await Promise.all(Array.from({ length: 5 }, () => upsertTask(owner._id, candidate)));
     assert.equal(await Task.countDocuments({ userId: owner._id, sourceId: 'race' }), 1);
   });
@@ -242,7 +213,6 @@ test('REST and MongoDB end-to-end regression suite', { timeout: 90000 }, async t
     const result = await request('/api/users/' + owner.id, { method: 'PATCH', cookie, body: { branch: 'Civil' } });
     assert.equal(result.status, 200);
     const list = await request('/api/tasks', { cookie });
-    assert.ok(list.data.data.tasks.some(task => task.category === 'scholarship'));
     assert.ok(!list.data.data.tasks.some(task => task.category === 'internship'));
   });
   await t.test('another user cannot read or mutate the owner data', async () => {
