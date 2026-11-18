@@ -18,7 +18,7 @@ test('source dates survive Gmail and Classroom normalization and the pipeline', 
   const records = [
     normalizeGmailMessage({ id: 'november', subject: 'Assignment', receivedAt }),
     normalizeClassroomCourseWork({ id: 'work', courseId: 'course', creationTime: '2026-08-26T10:00:00Z', updateTime: receivedAt }),
-    normalizeClassroomAnnouncement({ id: 'notice', courseId: 'course', text: 'Room change', creationTime: receivedAt }),
+    normalizeClassroomAnnouncement({ id: 'notice', courseId: 'course', text: 'Examination schedule update', creationTime: receivedAt }),
   ];
   for (const item of records) {
     assert.equal((await runPipeline(item, student)).occurredAt.toISOString(), expectedDate);
