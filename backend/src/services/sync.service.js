@@ -4,6 +4,7 @@ const normalizer = require('./ingestion/normalizer');
 const { runPipeline, ItemIgnoredError } = require('./decision/pipeline.service');
 const { upsertTask } = require('./task.service');
 const Task = require('../models/Task');
+const { isPlacementCellSender } = require('./ingestion/extractor');
 
 const GMAIL_TASK_CATEGORIES = ['internship', 'job', 'exam', 'assignment'];
 const PLACEMENT_CELL_SENDER = /\\b(?:training\\s*(?:and|&)\\s*placement|placement(?:\\s*(?:cell|office|team))?|tpo|tnp|t\\s*&\\s*p)\\b/i;
@@ -25,19 +26,19 @@ async function syncUserTasks(user, options = {}) {
       // Classroom tasks and all other user data are left untouched.
       const now = new Date();
       const cutoff = new Date(now.getTime() - 30 * DAY_MS);
-      await Task.deleteMany({
-        userId: user._id,
-        source: 'gmail',
-        $or: [
-          { occurredAt: { $lt: cutoff } },
-          { occurredAt: null },
-          { deadline: { $lt: now } },
-          {
-            category: { $nin: GMAIL_TASK_CATEGORIES },
-            organization: { $not: PLACEMENT_CELL_SENDER },
-          },
-        ],
-      });
+      const savedGmailTasks = await Task.find({ userId: user._id, source: 'gmail' })
+        .select('_id occurredAt deadline category organization')
+        .lean();
+      const staleTaskIds = savedGmailTasks.filter((task) => {
+        const receivedAt = task.occurredAt ? new Date(task.occurredAt) : null;
+        const isRecent = receivedAt && Number.isFinite(receivedAt.getTime()) && receivedAt >= cutoff;
+        const deadlineIsActive = !task.deadline || new Date(task.deadline) >= now;
+        const categoryIsAllowed = GMAIL_TASK_CATEGORIES.includes(task.category) || isPlacementCellSender(task.organization);
+        return !isRecent || !deadlineIsActive || !categoryIsAllowed;
+      }).map(task => task._id);
+      if (staleTaskIds.length) {
+        await Task.deleteMany({ userId: user._id, source: 'gmail', _id: { $in: staleTaskIds } });
+      }
     } catch (error) { summary.errors.push({ source: 'gmail', reason: error.message }); }
   }
   if (options.includeClassroom !== false) {
