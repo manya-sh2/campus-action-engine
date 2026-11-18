@@ -99,9 +99,11 @@ function extractStructuredInfo(item) {
   const combined = title + '\n' + text;
   const warnings = [];
   const isCourseWork = item.sourceType === 'courseWork';
-  const category = isCourseWork ? 'assignment' : (CATEGORY_RULES.find(([, pattern]) => pattern.test(combined)) || ['other'])[0];
+  const placementCellEmail = item.source === 'gmail' && isPlacementCellSender(item.from);
+  let category = isCourseWork ? 'assignment' : (CATEGORY_RULES.find(([, pattern]) => pattern.test(combined)) || ['other'])[0];
+  if (placementCellEmail && category === 'other') category = 'announcement';
   const marketing = /\b(sale|discount|coupon|newsletter|digest|unsubscribe from offers)\b/i.test(title);
-  const relevant = isCourseWork || (!marketing && (category !== 'other' || item.source === 'classroom'));
+  const relevant = isCourseWork || placementCellEmail || (!marketing && (category !== 'other' || item.source === 'classroom'));
   const informationalChange = /\b(cancelled|canceled|schedule change|room change|results published)\b/i.test(combined);
   const action = !informationalChange && (isCourseWork || /\b(apply|register|submit|complete|attend|pay|upload|fill)\b/i.test(combined) ||
     ['assignment', 'exam', 'registration'].includes(category));
