@@ -146,9 +146,11 @@ test('priority rises as deadlines approach and profile preferences affect releva
   assert.ok(scoreTask(task, { ...student, preferredCategories: [] }).importanceScore < soon.importanceScore);
 });
 
-test('overdue assignments are retained by the pipeline', async () => {
-  const candidate = await runPipeline({ ...email('Submit your assignment.\nDue: 2020-01-01'), title: 'Assignment' }, student);
-  assert.equal(candidate.urgencyScore, 100);
+test('Gmail emails with expired deadlines are rejected before priority scoring', async () => {
+  await assert.rejects(
+    runPipeline({ ...email('Submit your assignment.\nDue: 2020-01-01'), title: 'Assignment' }, student),
+    ItemIgnoredError
+  );
 });
 
 test('profile input rejects identity changes, operators and malformed values', () => {
