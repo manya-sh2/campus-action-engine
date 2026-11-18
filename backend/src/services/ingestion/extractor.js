@@ -14,7 +14,7 @@ const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '
 
 // Recognize common names used by a college placement office in the sender field.
 function isPlacementCellSender(sender) {
-  return /\\b(?:training\\s*(?:and|&)\\s*placement|placement(?:\\s*(?:cell|office|team))?|tpo|tnp|t\\s*&\\s*p)\\b/i.test(String(sender || ''));
+  return /\b(?:training\s*(?:and|&)\s*placement|placement(?:\s*(?:cell|office|team))?|tpo|tnp|t\s*&\s*p)\b/i.test(String(sender || ''));
 }
 
 function safeUrl(value) {
