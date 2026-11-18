@@ -2,10 +2,10 @@ const { aliases } = require('./branches');
 
 const CATEGORY_RULES = [
   ['scholarship', /\b(scholarship|fellowship)\b/i],
-  ['internship', /\bintern(ship|ships)?\b/i],
-  ['job', /\b(job|placement|recruitment|hiring)\b/i],
-  ['exam', /\b(exam|examination|quiz|midterm|endsem)\b/i],
-  ['assignment', /\b(assignment|homework|lab report|problem set)\b/i],
+  ['internship', /\binternships?\b/i],
+  ['job', /\b(jobs?|placement|recruitment|hiring)\b/i],
+  ['exam', /\b(exams?|examinations?|quizzes|midterms?|endsem)\b/i],
+  ['assignment', /\b(assignments?|homework|lab report|problem set)\b/i],
   ['registration', /\b(course registration|semester registration|enrolment|enrollment)\b/i],
   ['event', /\b(workshop|seminar|hackathon|competition|campus event)\b/i],
   ['announcement', /\b(timetable|schedule change|class cancelled|class canceled|room change|academic notice|results published)\b/i],
