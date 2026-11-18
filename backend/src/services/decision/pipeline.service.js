@@ -6,8 +6,8 @@ const { computePriority } = require('./priority.service');
 const { resolveDeadline } = require('../../utils/timezone');
 
 const OPPORTUNITY_CATEGORIES = new Set(['job', 'internship', 'scholarship', 'event', 'registration']);
-const GMAIL_ALLOWED_CATEGORIES = new Set(['internship', 'job', 'exam', 'assignment']);
-const GMAIL_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+const ALLOWED_CATEGORIES = new Set(['internship', 'job', 'exam', 'assignment']);
+const LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 class ItemIgnoredError extends Error {
   constructor(reason) { super(reason); this.name = 'ItemIgnoredError'; }
 }
@@ -32,21 +32,24 @@ async function runPipeline(item, user) {
   const raw = extractStructuredInfo(item);
   if (raw.classification === 'IGNORE') throw new ItemIgnoredError(raw.ignoreReason);
 
-  if (item.source === 'gmail') {
-    const receivedAt = item.occurredAt ? new Date(item.occurredAt) : null;
-    const cutoff = Date.now() - GMAIL_LOOKBACK_MS;
-    if (!receivedAt || !Number.isFinite(receivedAt.getTime()) || receivedAt.getTime() < cutoff) {
-      throw new ItemIgnoredError('Email was not received within the last 30 days.');
+  if (item.source === 'gmail' || item.source === 'classroom') {
+    const sourceDate = item.occurredAt ? new Date(item.occurredAt) : null;
+    const cutoff = Date.now() - LOOKBACK_MS;
+    if (!sourceDate || !Number.isFinite(sourceDate.getTime()) || sourceDate.getTime() < cutoff) {
+      throw new ItemIgnoredError('Record is not within the last 30 days.');
     }
-    if (!GMAIL_ALLOWED_CATEGORIES.has(raw.category) && !isPlacementCellSender(item.from)) {
-      throw new ItemIgnoredError('Email is outside the selected categories.');
+    const isAllowedCategory = ALLOWED_CATEGORIES.has(raw.category);
+    const isPlacementCellEmail = item.source === 'gmail' && isPlacementCellSender(item.from);
+    if (!isAllowedCategory && !isPlacementCellEmail) {
+      throw new ItemIgnoredError('Record is outside the selected categories.');
     }
   }
 
-  // Reject expired Gmail deadlines before running the priority calculation.
+  // Reject expired deadlines from both Gmail and Classroom before priority scoring.
   const parsedDeadline = resolveDeadline(raw.deadline, user && user.timezone);
-  if (item.source === 'gmail' && parsedDeadline && parsedDeadline.getTime() < Date.now()) {
-    throw new ItemIgnoredError('Email deadline has already passed.');
+  if ((item.source === 'gmail' || item.source === 'classroom') &&
+      parsedDeadline && parsedDeadline.getTime() < Date.now()) {
+    throw new ItemIgnoredError('Record deadline has already passed.');
   }
 
   // Keep the existing rule-based scoring for every item that passes the filter.
