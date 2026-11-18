@@ -40,7 +40,8 @@ test('irrelevant advertisements are ignored', async () => {
   await assert.rejects(runPipeline({ ...email('Shop now for a discount'), title: 'Weekend sale' }, student), ItemIgnoredError);
 });
 
-test('Gmail keeps only recent approved categories or Placement Cell sender emails', async () => {
+test('Gmail keeps only recent approved categories or Placement Cell sender emails', async t => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-11-19T00:00:00.000Z'));
   const recent = '2026-11-15T10:00:00.000Z';
   const old = '2026-10-01T10:00:00.000Z';
 
