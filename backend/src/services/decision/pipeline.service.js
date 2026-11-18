@@ -3,6 +3,7 @@ const { evaluateEligibility } = require('./eligibility.service');
 const { scoreImportance } = require('./importance.service');
 const { scoreUrgency } = require('./urgency.service');
 const { computePriority } = require('./priority.service');
+const { resolveDeadline } = require('../../utils/timezone');
 
 const OPPORTUNITY_CATEGORIES = new Set(['job', 'internship', 'scholarship', 'event', 'registration']);
 const GMAIL_ALLOWED_CATEGORIES = new Set(['internship', 'job', 'exam', 'assignment']);
@@ -42,11 +43,14 @@ async function runPipeline(item, user) {
     }
   }
 
-  // Keep the existing rule-based scoring for every item that passes the filter.
-  const scores = scoreTask(raw, user);
-  if (item.source === 'gmail' && scores.deadline && scores.deadline.getTime() < Date.now()) {
+  // Reject expired Gmail deadlines before running the priority calculation.
+  const parsedDeadline = resolveDeadline(raw.deadline, user && user.timezone);
+  if (item.source === 'gmail' && parsedDeadline && parsedDeadline.getTime() < Date.now()) {
     throw new ItemIgnoredError('Email deadline has already passed.');
   }
+
+  // Keep the existing rule-based scoring for every item that passes the filter.
+  const scores = scoreTask(raw, user);
 
   // Store recognizable opportunities even when currently ineligible. Default feeds
   // filter them out; a profile correction can make them visible without re-importing.
