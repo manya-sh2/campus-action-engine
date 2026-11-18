@@ -83,6 +83,58 @@ test('Gmail keeps only recent approved categories or Placement Cell sender email
   );
 });
 
+test('Classroom keeps only recent allowed categories with non-expired deadlines', async t => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-11-19T00:00:00.000Z'));
+  const recent = '2026-11-15T10:00:00.000Z';
+  const old = '2026-10-01T10:00:00.000Z';
+
+  const assignment = await runPipeline({
+    source: 'classroom',
+    sourceType: 'courseWork',
+    sourceId: 'recent-assignment',
+    title: 'Database assignment',
+    text: 'Complete and submit the SQL assignment.',
+    occurredAt: recent,
+    deadline: '2099-12-20T00:00:00.000Z',
+  }, student);
+  assert.equal(assignment.category, 'assignment');
+
+  const exam = await runPipeline({
+    source: 'classroom',
+    sourceType: 'announcement',
+    sourceId: 'recent-exam',
+    title: 'Examination schedule',
+    text: 'Read the examination timetable.',
+    occurredAt: recent,
+  }, student);
+  assert.equal(exam.category, 'exam');
+
+  await assert.rejects(
+    runPipeline({
+      source: 'classroom', sourceType: 'courseWork', sourceId: 'old-assignment',
+      title: 'Database assignment', text: 'Submit the assignment.',
+      occurredAt: old,
+    }, student),
+    ItemIgnoredError
+  );
+  await assert.rejects(
+    runPipeline({
+      source: 'classroom', sourceType: 'announcement', sourceId: 'expired-exam',
+      title: 'Examination notice', text: 'Read the examination notice.',
+      occurredAt: recent, deadline: '2020-01-01',
+    }, student),
+    ItemIgnoredError
+  );
+  await assert.rejects(
+    runPipeline({
+      source: 'classroom', sourceType: 'announcement', sourceId: 'workshop',
+      title: 'Workshop', text: 'Attend the workshop.',
+      occurredAt: recent,
+    }, student),
+    ItemIgnoredError
+  );
+});
+
 test('missing profile information is unknown, never verified eligibility', () => {
   const result = evaluateEligibility({}, { eligibility: { branches: ['CSE'], minCgpa: 8, graduationYears: [2027] } });
   assert.equal(result.status, 'unknown'); assert.equal(result.eligible, null);
