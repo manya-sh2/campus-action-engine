@@ -7,7 +7,6 @@ const Task = require('../models/Task');
 const { isPlacementCellSender } = require('./ingestion/extractor');
 
 const GMAIL_TASK_CATEGORIES = ['internship', 'job', 'exam', 'assignment'];
-const PLACEMENT_CELL_SENDER = /\\b(?:training\\s*(?:and|&)\\s*placement|placement(?:\\s*(?:cell|office|team))?|tpo|tnp|t\\s*&\\s*p)\\b/i;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function syncUserTasks(user, options = {}) {
