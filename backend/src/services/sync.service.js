@@ -6,7 +6,7 @@ const { upsertTask } = require('./task.service');
 const Task = require('../models/Task');
 const { isPlacementCellSender } = require('./ingestion/extractor');
 
-const GMAIL_TASK_CATEGORIES = ['internship', 'job', 'exam', 'assignment'];
+const ALLOWED_TASK_CATEGORIES = ['internship', 'job', 'exam', 'assignment'];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function syncUserTasks(user, options = {}) {
@@ -20,24 +20,6 @@ async function syncUserTasks(user, options = {}) {
       const { messages, hasMore } = await gmail.getMessageBatch(user.id, { q: query, maxResults: limit });
       items.push(...messages.map(normalizer.normalizeGmailMessage));
       if (hasMore) summary.warnings.push(`Imported ${messages.length} Gmail messages (limit ${limit}). More messages match this query; they were not fetched in this sync. This is an import limit, not a sync failure.`);
-
-      // Remove previously saved Gmail tasks that no longer match the new rules.
-      // Classroom tasks and all other user data are left untouched.
-      const now = new Date();
-      const cutoff = new Date(now.getTime() - 30 * DAY_MS);
-      const savedGmailTasks = await Task.find({ userId: user._id, source: 'gmail' })
-        .select('_id occurredAt deadline category organization')
-        .lean();
-      const staleTaskIds = savedGmailTasks.filter((task) => {
-        const receivedAt = task.occurredAt ? new Date(task.occurredAt) : null;
-        const isRecent = receivedAt && Number.isFinite(receivedAt.getTime()) && receivedAt >= cutoff;
-        const deadlineIsActive = !task.deadline || new Date(task.deadline) >= now;
-        const categoryIsAllowed = GMAIL_TASK_CATEGORIES.includes(task.category) || isPlacementCellSender(task.organization);
-        return !isRecent || !deadlineIsActive || !categoryIsAllowed;
-      }).map(task => task._id);
-      if (staleTaskIds.length) {
-        await Task.deleteMany({ userId: user._id, source: 'gmail', _id: { $in: staleTaskIds } });
-      }
     } catch (error) { summary.errors.push({ source: 'gmail', reason: error.message }); }
   }
   if (options.includeClassroom !== false) {
@@ -63,6 +45,37 @@ async function syncUserTasks(user, options = {}) {
       }
     } catch (error) { summary.errors.push({ source: 'classroom', reason: error.message }); }
   }
+
+  // Remove previously saved Gmail and Classroom tasks that no longer match
+  // the common 30-day, category and deadline rules. Other sources are untouched.
+  try {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - 30 * DAY_MS);
+    const savedTasks = await Task.find({
+      userId: user._id,
+      source: { $in: ['gmail', 'classroom'] },
+    }).select('_id source occurredAt deadline category organization').lean();
+
+    const staleTaskIds = savedTasks.filter(task => {
+      const sourceDate = task.occurredAt ? new Date(task.occurredAt) : null;
+      const isRecent = sourceDate && Number.isFinite(sourceDate.getTime()) && sourceDate >= cutoff;
+      const deadlineIsActive = !task.deadline || new Date(task.deadline) >= now;
+      const categoryIsAllowed = ALLOWED_TASK_CATEGORIES.includes(task.category) ||
+        (task.source === 'gmail' && isPlacementCellSender(task.organization));
+      return !isRecent || !deadlineIsActive || !categoryIsAllowed;
+    }).map(task => task._id);
+
+    if (staleTaskIds.length) {
+      await Task.deleteMany({
+        userId: user._id,
+        source: { $in: ['gmail', 'classroom'] },
+        _id: { $in: staleTaskIds },
+      });
+    }
+  } catch (error) {
+    summary.errors.push({ source: 'cleanup', reason: error.message });
+  }
+
   summary.fetched = items.length;
   for (const item of items) {
     try {
@@ -72,13 +85,13 @@ async function syncUserTasks(user, options = {}) {
     } catch (error) {
       if (error instanceof ItemIgnoredError) {
         summary.ignored += 1;
-        // If this email was saved by an older sync, remove it now that it fails the new filter.
-        if (item.source === 'gmail') {
+        // Remove an older copy if this source record no longer passes the filter.
+        if (item.source === 'gmail' || item.source === 'classroom') {
           try {
-            await Task.deleteOne({ userId: user._id, source: 'gmail', sourceId: item.sourceId });
+            await Task.deleteOne({ userId: user._id, source: item.source, sourceId: item.sourceId });
           } catch (deleteError) {
             summary.failed += 1;
-            summary.errors.push({ source: 'gmail', title: item.title, reason: deleteError.message });
+            summary.errors.push({ source: item.source, title: item.title, reason: deleteError.message });
           }
         }
       } else {
