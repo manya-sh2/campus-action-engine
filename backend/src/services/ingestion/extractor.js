@@ -12,6 +12,11 @@ const CATEGORY_RULES = [
 ];
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
+// Recognize common names used by a college placement office in the sender field.
+function isPlacementCellSender(sender) {
+  return /\\b(?:training\\s*(?:and|&)\\s*placement|placement(?:\\s*(?:cell|office|team))?|tpo|tnp|t\\s*&\\s*p)\\b/i.test(String(sender || ''));
+}
+
 function safeUrl(value) {
   try {
     const url = new URL(value);
@@ -116,4 +121,4 @@ function extractStructuredInfo(item) {
     actionUrl: safeUrl(item.link),
   };
 }
-module.exports = { extractStructuredInfo, extractDeadline, extractEligibility, safeUrl };
+module.exports = { extractStructuredInfo, extractDeadline, extractEligibility, safeUrl, isPlacementCellSender };
