@@ -10,20 +10,22 @@ const { ALL_SCOPES } = require('../src/config/googleScopes');
 const mapInBatches = require('../src/utils/mapInBatches');
 
 const student = { branch: 'Mining', cgpa: 8.48, graduationYear: 2027, timezone: 'Asia/Kolkata', preferredCategories: ['internship'] };
-const email = text => ({ source: 'gmail', sourceType: 'email', sourceId: '1', title: 'Internship application', text });
+const email = text => ({ source: 'gmail', sourceType: 'email', sourceId: '1', title: 'Internship application', text, occurredAt: new Date().toISOString() });
 
 test('source dates survive Gmail and Classroom normalization and the pipeline', async () => {
-  const receivedAt = '2026-11-09T10:00:00Z';
+  const receivedAt = new Date().toISOString();
+  const expectedDate = new Date(receivedAt).toISOString();
   const records = [
     normalizeGmailMessage({ id: 'november', subject: 'Assignment', receivedAt }),
     normalizeClassroomCourseWork({ id: 'work', courseId: 'course', creationTime: '2026-08-26T10:00:00Z', updateTime: receivedAt }),
-    normalizeClassroomAnnouncement({ id: 'notice', courseId: 'course', text: 'Room change', creationTime: receivedAt }),
+    normalizeClassroomAnnouncement({ id: 'notice', courseId: 'course', text: 'Examination schedule update', creationTime: receivedAt }),
   ];
   for (const item of records) {
-    assert.equal((await runPipeline(item, student)).occurredAt.toISOString(), '2026-11-09T10:00:00.000Z');
+    assert.equal((await runPipeline(item, student)).occurredAt.toISOString(), expectedDate);
   }
+  // Recent-date validation intentionally rejects Gmail records with missing or invalid receipt times.
   for (const occurredAt of [undefined, null, 'invalid']) {
-    assert.equal((await runPipeline({ ...records[0], occurredAt }, student)).occurredAt, null);
+    await assert.rejects(runPipeline({ ...records[0], occurredAt }, student), ItemIgnoredError);
   }
 });
 
@@ -38,6 +40,99 @@ test('extracts explicit facts and prioritizes a relevant opportunity', async () 
 
 test('irrelevant advertisements are ignored', async () => {
   await assert.rejects(runPipeline({ ...email('Shop now for a discount'), title: 'Weekend sale' }, student), ItemIgnoredError);
+});
+
+test('Gmail keeps only recent approved categories or Placement Cell sender emails', async t => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-11-19T00:00:00.000Z'));
+  const recent = '2026-11-15T10:00:00.000Z';
+  const old = '2026-10-01T10:00:00.000Z';
+
+  const internship = await runPipeline({
+    ...email('Apply for this internship'),
+    occurredAt: recent,
+    title: 'Summer Internship Opportunity',
+  }, student);
+  assert.equal(internship.category, 'internship');
+
+  const job = await runPipeline({
+    ...email('Apply for this job'),
+    occurredAt: recent,
+    title: 'Graduate Job Opportunity',
+  }, student);
+  assert.equal(job.category, 'job');
+
+  const placement = await runPipeline({
+    ...email('Please read this important notice'),
+    occurredAt: recent,
+    from: 'Training & Placement Cell <tpo@example.edu>',
+    title: 'Important Notice',
+  }, student);
+  assert.equal(placement.category, 'announcement');
+
+  await assert.rejects(
+    runPipeline({ ...email('Attend the workshop'), occurredAt: recent, title: 'Workshop' }, student),
+    ItemIgnoredError
+  );
+  await assert.rejects(
+    runPipeline({ ...email('Apply for this internship'), occurredAt: old }, student),
+    ItemIgnoredError
+  );
+  await assert.rejects(
+    runPipeline({ ...email('Submit your assignment. Due: 2020-01-01'), occurredAt: recent, title: 'Assignment' }, student),
+    ItemIgnoredError
+  );
+});
+
+test('Classroom keeps only recent allowed categories with non-expired deadlines', async t => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-11-19T00:00:00.000Z'));
+  const recent = '2026-11-15T10:00:00.000Z';
+  const old = '2026-10-01T10:00:00.000Z';
+
+  const assignment = await runPipeline({
+    source: 'classroom',
+    sourceType: 'courseWork',
+    sourceId: 'recent-assignment',
+    title: 'Database assignment',
+    text: 'Complete and submit the SQL assignment.',
+    occurredAt: recent,
+    deadline: '2099-12-20T00:00:00.000Z',
+  }, student);
+  assert.equal(assignment.category, 'assignment');
+
+  const exam = await runPipeline({
+    source: 'classroom',
+    sourceType: 'announcement',
+    sourceId: 'recent-exam',
+    title: 'Examination schedule',
+    text: 'Read the examination timetable.',
+    occurredAt: recent,
+  }, student);
+  assert.equal(exam.category, 'exam');
+
+  await assert.rejects(
+    runPipeline({
+      source: 'classroom', sourceType: 'courseWork', sourceId: 'old-assignment',
+      title: 'Database assignment', text: 'Submit the assignment.',
+      occurredAt: old,
+    }, student),
+    ItemIgnoredError
+  );
+  await assert.rejects(
+    runPipeline({
+      source: 'classroom', sourceType: 'announcement', sourceId: 'expired-exam',
+      title: 'Examination notice', text: 'Read the examination notice.',
+      occurredAt: recent, deadline: '2020-01-01',
+    }, student),
+    ItemIgnoredError
+  );
+  await assert.rejects(
+    runPipeline({
+      source: 'classroom', sourceType: 'announcement', sourceId: 'workshop',
+      title: 'Workshop', text: 'Attend the workshop.',
+      occurredAt: recent,
+    }, student),
+    ItemIgnoredError
+  );
 });
 
 test('missing profile information is unknown, never verified eligibility', () => {
@@ -105,9 +200,11 @@ test('priority rises as deadlines approach and profile preferences affect releva
   assert.ok(scoreTask(task, { ...student, preferredCategories: [] }).importanceScore < soon.importanceScore);
 });
 
-test('overdue assignments are retained by the pipeline', async () => {
-  const candidate = await runPipeline({ ...email('Submit your assignment.\nDue: 2020-01-01'), title: 'Assignment' }, student);
-  assert.equal(candidate.urgencyScore, 100);
+test('Gmail emails with expired deadlines are rejected before priority scoring', async () => {
+  await assert.rejects(
+    runPipeline({ ...email('Submit your assignment.\nDue: 2020-01-01'), title: 'Assignment' }, student),
+    ItemIgnoredError
+  );
 });
 
 test('profile input rejects identity changes, operators and malformed values', () => {

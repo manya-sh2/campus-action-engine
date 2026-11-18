@@ -2,15 +2,20 @@ const { aliases } = require('./branches');
 
 const CATEGORY_RULES = [
   ['scholarship', /\b(scholarship|fellowship)\b/i],
-  ['internship', /\bintern(ship|ships)?\b/i],
-  ['job', /\b(job|placement|recruitment|hiring)\b/i],
-  ['exam', /\b(exam|examination|quiz|midterm|endsem)\b/i],
-  ['assignment', /\b(assignment|homework|lab report|problem set)\b/i],
+  ['internship', /\binternships?\b/i],
+  ['job', /\b(jobs?|placement|recruitment|hiring)\b/i],
+  ['exam', /\b(exams?|examinations?|quizzes|midterms?|endsem)\b/i],
+  ['assignment', /\b(assignments?|homework|lab report|problem set)\b/i],
   ['registration', /\b(course registration|semester registration|enrolment|enrollment)\b/i],
   ['event', /\b(workshop|seminar|hackathon|competition|campus event)\b/i],
   ['announcement', /\b(timetable|schedule change|class cancelled|class canceled|room change|academic notice|results published)\b/i],
 ];
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+// Recognize common names used by a college placement office in the sender field.
+function isPlacementCellSender(sender) {
+  return /\b(?:training\s*(?:and|&)\s*placement|placement(?:\s*(?:cell|office|team))?|tpo|tnp|t\s*&\s*p)\b/i.test(String(sender || ''));
+}
 
 function safeUrl(value) {
   try {
@@ -94,9 +99,11 @@ function extractStructuredInfo(item) {
   const combined = title + '\n' + text;
   const warnings = [];
   const isCourseWork = item.sourceType === 'courseWork';
-  const category = isCourseWork ? 'assignment' : (CATEGORY_RULES.find(([, pattern]) => pattern.test(combined)) || ['other'])[0];
+  const placementCellEmail = item.source === 'gmail' && isPlacementCellSender(item.from);
+  let category = isCourseWork ? 'assignment' : (CATEGORY_RULES.find(([, pattern]) => pattern.test(combined)) || ['other'])[0];
+  if (placementCellEmail && category === 'other') category = 'announcement';
   const marketing = /\b(sale|discount|coupon|newsletter|digest|unsubscribe from offers)\b/i.test(title);
-  const relevant = isCourseWork || (!marketing && (category !== 'other' || item.source === 'classroom'));
+  const relevant = isCourseWork || placementCellEmail || (!marketing && (category !== 'other' || item.source === 'classroom'));
   const informationalChange = /\b(cancelled|canceled|schedule change|room change|results published)\b/i.test(combined);
   const action = !informationalChange && (isCourseWork || /\b(apply|register|submit|complete|attend|pay|upload|fill)\b/i.test(combined) ||
     ['assignment', 'exam', 'registration'].includes(category));
@@ -116,4 +123,4 @@ function extractStructuredInfo(item) {
     actionUrl: safeUrl(item.link),
   };
 }
-module.exports = { extractStructuredInfo, extractDeadline, extractEligibility, safeUrl };
+module.exports = { extractStructuredInfo, extractDeadline, extractEligibility, safeUrl, isPlacementCellSender };
