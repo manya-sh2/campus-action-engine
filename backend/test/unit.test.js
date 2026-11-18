@@ -10,10 +10,10 @@ const { ALL_SCOPES } = require('../src/config/googleScopes');
 const mapInBatches = require('../src/utils/mapInBatches');
 
 const student = { branch: 'Mining', cgpa: 8.48, graduationYear: 2027, timezone: 'Asia/Kolkata', preferredCategories: ['internship'] };
-const email = text => ({ source: 'gmail', sourceType: 'email', sourceId: '1', title: 'Internship application', text });
+const email = text => ({ source: 'gmail', sourceType: 'email', sourceId: '1', title: 'Internship application', text, occurredAt: new Date().toISOString() });
 
 test('source dates survive Gmail and Classroom normalization and the pipeline', async () => {
-  const receivedAt = '2026-11-09T10:00:00Z';
+  const receivedAt = new Date().toISOString();
   const records = [
     normalizeGmailMessage({ id: 'november', subject: 'Assignment', receivedAt }),
     normalizeClassroomCourseWork({ id: 'work', courseId: 'course', creationTime: '2026-08-26T10:00:00Z', updateTime: receivedAt }),
@@ -38,6 +38,46 @@ test('extracts explicit facts and prioritizes a relevant opportunity', async () 
 
 test('irrelevant advertisements are ignored', async () => {
   await assert.rejects(runPipeline({ ...email('Shop now for a discount'), title: 'Weekend sale' }, student), ItemIgnoredError);
+});
+
+test('Gmail keeps only recent approved categories or Placement Cell sender emails', async () => {
+  const recent = '2026-11-15T10:00:00.000Z';
+  const old = '2026-10-01T10:00:00.000Z';
+
+  const internship = await runPipeline({
+    ...email('Apply for this internship'),
+    occurredAt: recent,
+    title: 'Summer Internship Opportunity',
+  }, student);
+  assert.equal(internship.category, 'internship');
+
+  const job = await runPipeline({
+    ...email('Apply for this job'),
+    occurredAt: recent,
+    title: 'Graduate Job Opportunity',
+  }, student);
+  assert.equal(job.category, 'job');
+
+  const placement = await runPipeline({
+    ...email('Please read this important notice'),
+    occurredAt: recent,
+    from: 'Training & Placement Cell <tpo@example.edu>',
+    title: 'Important Notice',
+  }, student);
+  assert.equal(placement.category, 'announcement');
+
+  await assert.rejects(
+    runPipeline({ ...email('Attend the workshop'), occurredAt: recent, title: 'Workshop' }, student),
+    ItemIgnoredError
+  );
+  await assert.rejects(
+    runPipeline({ ...email('Apply for this internship'), occurredAt: old }, student),
+    ItemIgnoredError
+  );
+  await assert.rejects(
+    runPipeline({ ...email('Submit your assignment. Due: 2020-01-01'), occurredAt: recent, title: 'Assignment' }, student),
+    ItemIgnoredError
+  );
 });
 
 test('missing profile information is unknown, never verified eligibility', () => {
