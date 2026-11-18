@@ -12,11 +12,13 @@ const gmailMessages = [
   {
     id: 'test-ineligible', subject: 'Civil engineering scholarship',
     from: 'Scholarships <funding@example.edu>',
+    receivedAt: new Date(now).toISOString(),
     body: { text: 'Apply for the scholarship.\nEligible branches: Civil\nMinimum CGPA: 8\nDeadline: ' + isoDay(10) },
   },
   {
     id: 'test-exam', subject: 'Exam schedule change',
     from: 'Academic Office <office@example.edu>',
+    receivedAt: new Date(now).toISOString(),
     body: { text: 'The exam room has changed to Hall B. Read the revised timetable before attending.' },
   },
   { id: 'test-promo', subject: 'Weekend sale: discount coupon', body: { text: 'Shop now.' } },
